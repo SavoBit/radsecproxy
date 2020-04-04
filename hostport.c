@@ -322,7 +322,7 @@ int addressmatches(struct list *hostports, struct sockaddr *addr, uint8_t checkp
     return _internal_addressmatches(hostports, addr, 255, checkport);
 }
 
-int connecttcphostlist(struct list *hostports,  struct addrinfo *src) {
+int connecttcphostlist(struct list *hostports,  struct addrinfo *src, struct hostportres **hp_in_use) {
     int s;
     struct list_node *entry;
     struct hostportres *hp = NULL;
@@ -331,6 +331,7 @@ int connecttcphostlist(struct list *hostports,  struct addrinfo *src) {
 	hp = (struct hostportres *)entry->data;
 	debug(DBG_WARN, "connecttcphostlist: trying to open TCP connection to %s port %s", hp->host, hp->port);
 	if ((s = connecttcp(hp->addrinfo, src, list_count(hostports) > 1 ? 5 : 30)) >= 0) {
+	    if (hp_in_use) *hp_in_use = hp;
 	    debug(DBG_WARN, "connecttcphostlist: TCP connection to %s port %s up", hp->host, hp->port);
 	    return s;
 	}

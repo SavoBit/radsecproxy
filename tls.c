@@ -91,6 +91,7 @@ int tlsconnect(struct server *server, int timeout, char *text) {
     unsigned long error;
     int origflags;
     struct addrinfo *source = NULL;
+    struct hostportres *hp_in_use;
 
     debug(DBG_DBG, "tlsconnect: called from %s", text);
     pthread_mutex_lock(&server->lock);
@@ -129,8 +130,9 @@ int tlsconnect(struct server *server, int timeout, char *text) {
         }
 
         debug(DBG_INFO, "tlsconnect: connecting to %s", server->conf->name);
-        if ((server->sock = connecttcphostlist(server->conf->hostports, source ? source : srcres)) < 0)
+        if ((server->sock = connecttcphostlist(server->conf->hostports, source ? source : srcres, &hp_in_use)) < 0)
             continue;
+        debug(DBG_INFO, "tlsconnect: connected to %s using host:%s port:%s ", server->conf->name, hp_in_use->host, hp_in_use->port);
         if (server->conf->keepalive)
             enable_keepalive(server->sock);
 
@@ -144,6 +146,21 @@ int tlsconnect(struct server *server, int timeout, char *text) {
         pthread_mutex_unlock(&server->conf->tlsconf->lock);
         if (!server->ssl)
             continue;
+
+	switch(server->conf->hostaf) {
+	    char buf[16];
+	    case AF_INET:
+	    case AF_INET6:
+		if ((0 == inet_pton(server->conf->hostaf, hp_in_use->host, buf)) && !SSL_set_tlsext_host_name(server->ssl, hp_in_use->host)) {
+		    debug(DBG_WARN, "tlsconnect: SSL connect to %s, configure server name indication (SNI) to %s failed", server->conf->name, hp_in_use->host);
+		}
+		break;
+	    default:
+		if ((0 == inet_pton(AF_INET, hp_in_use->host, buf)) && (0 == inet_pton(AF_INET6, hp_in_use->host, buf)) && !SSL_set_tlsext_host_name(server->ssl, hp_in_use->host)) {
+		    debug(DBG_WARN, "tlsconnect: SSL connect to %s, configure server name indication (SNI) to %s failed", server->conf->name, hp_in_use->host);
+		}
+		break;
+	}
 
         SSL_set_fd(server->ssl, server->sock);
         if (sslconnecttimeout(server->ssl, 5) <= 0) {
