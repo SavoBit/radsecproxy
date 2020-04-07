@@ -28,6 +28,8 @@
 #include "debug.h"
 #include "util.h"
 
+extern int radsecproxy_ssl_servername_index;
+
 static void setprotoopts(struct commonprotoopts *opts);
 static char **getlistenerargs();
 void *tlslistener(void *arg);
@@ -508,8 +510,9 @@ void *tlsservernew(void *arg) {
     SSL_CTX *ctx = NULL;
     unsigned long error;
     struct client *client;
-    struct tls *accepted_tls = NULL;
+    //struct tls *accepted_tls = NULL;
     char tmp[INET6_ADDRSTRLEN];
+    char *accepted_tlssn = NULL;
 
     s = *(int *)arg;
     free(arg);
@@ -533,6 +536,15 @@ void *tlsservernew(void *arg) {
         if (!ssl)
             goto exit;
 
+	if (SSL_set_ex_data(ssl, radsecproxy_ssl_servername_index, conf->tlsconf->name) == 0) {
+	    debug(DBG_ERR, "SSL_set_ex_data(radsecproxy_ssl_servername_index) failed");
+        }
+
+	accepted_tlssn = SSL_get_ex_data(ssl, radsecproxy_ssl_servername_index);
+	if (accepted_tlssn) {
+	    debug(DBG_INFO, "tlsservernew:: start with servername=%s", accepted_tlssn);
+	}
+
         SSL_set_fd(ssl, s);
         if (sslaccepttimeout(ssl, 30) <= 0) {
             while ((error = ERR_get_error()))
@@ -543,7 +555,13 @@ void *tlsservernew(void *arg) {
         cert = verifytlscert(ssl);
         if (!cert)
             goto exit;
-        accepted_tls = conf->tlsconf;
+
+	accepted_tlssn = SSL_get_ex_data(ssl, radsecproxy_ssl_servername_index);
+	if (accepted_tlssn) {
+	    debug(DBG_INFO, "tlsservernew:: accepted servername=%s", accepted_tlssn);
+	}
+
+        //accepted_tls = conf->tlsconf;
     }
 
     origflags = fcntl(s, F_GETFL, 0);
@@ -554,7 +572,8 @@ void *tlsservernew(void *arg) {
     }
 
     while (conf) {
-        if (accepted_tls == conf->tlsconf && verifyconfcert(cert, conf)) {
+        //if (accepted_tls == conf->tlsconf && verifyconfcert(cert, conf)) {
+        if (tlssn_in_conf(accepted_tlssn, conf) && verifyconfcert(cert, conf)) {
             X509_free(cert);
             client = addclient(conf, 1);
             if (client) {
@@ -570,7 +589,7 @@ void *tlsservernew(void *arg) {
         }
         conf = find_clconf(handle, (struct sockaddr *)&from, &cur);
     }
-    debug(DBG_WARN, "tlsservernew: ignoring request, no matching TLS client");
+    debug(DBG_WARN, "tlsservernew: ignoring request, no matching TLS client with accepted_tlssn: %s", accepted_tlssn);
     if (cert)
 	X509_free(cert);
 

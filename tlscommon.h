@@ -18,6 +18,7 @@ struct tls {
     char *certkeypwd;
     uint8_t crlcheck;
     char **policyoids;
+    uint8_t snicallback;
     uint32_t cacheexpiry;
     uint32_t tlsexpiry;
     uint32_t dtlsexpiry;
@@ -39,6 +40,7 @@ int addmatchcertattr(struct clsrvconf *conf);
 void tlsreloadcrls();
 int sslconnecttimeout(SSL *ssl, int timeout);
 int sslaccepttimeout (SSL *ssl, int timeout);
+int tlssn_in_conf(char *tlssn, struct clsrvconf *conf);
 #endif
 
 /* Local Variables: */

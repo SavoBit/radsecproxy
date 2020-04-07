@@ -149,6 +149,7 @@ struct clsrvconf {
     uint8_t *secret;
     int secret_len;
     char *tls;
+    char **tlssn;
     char *matchcertattr;
     regex_t *certcnregex;
     regex_t *certuriregex;

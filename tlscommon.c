@@ -39,6 +39,7 @@ static struct hash *tlsconfs = NULL;
 static unsigned char cookie_secret[COOKIE_SECRET_LENGTH];
 static uint8_t cookie_secret_initialized = 0;
 
+int radsecproxy_ssl_servername_index;
 
 /* callbacks for making OpenSSL < 1.1 thread safe */
 #if OPENSSL_VERSION_NUMBER < 0x10100000
@@ -86,6 +87,10 @@ void sslinit() {
 #else
     OPENSSL_init_ssl(0, NULL);
 #endif
+    radsecproxy_ssl_servername_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+    if (radsecproxy_ssl_servername_index == -1) {
+        debug(DBG_ERR, "SSL_get_ex_new_index for radsecproxy_ssl_servername_index failed");
+    }
 }
 
 static int pem_passwd_cb(char *buf, int size, int rwflag, void *userdata) {
@@ -339,6 +344,31 @@ static int tlsaddcacrl(SSL_CTX *ctx, struct tls *conf) {
     return 1;
 }
 
+static int ssl_servername_cb(SSL *s, int *ad, void *arg)
+{
+    const char *servername = SSL_get_servername(s, TLSEXT_NAMETYPE_host_name);
+    struct tls *tls = NULL;
+    SSL_CTX *ctx = NULL;
+
+    if (servername == NULL)
+        return SSL_TLSEXT_ERR_OK;
+
+    tls = tlsgettls((char *)servername, NULL);
+    if (tls) {
+	ctx = tlsgetctx(RAD_TLS, tls);
+	if (ctx) {
+	    debug(DBG_DBG, "ssl_servername_cb: servername: %s, calling SSL_set_SSL_CTX()", servername);
+	    SSL_set_SSL_CTX(s, ctx);
+	    if (SSL_set_ex_data(s, radsecproxy_ssl_servername_index, (char *)servername) == 0) {
+		debug(DBG_ERR, "ssl_servername_cb: SSL_set_ex_data(radsecproxy_ssl_servername_index: %d) failed", radsecproxy_ssl_servername_index);
+	    }
+	} else {
+	    debug(DBG_ERR, "ssl_servername_cb: tlsgetctx() for %s failed", servername);
+	}
+    }
+    return SSL_TLSEXT_ERR_OK;
+}
+
 static SSL_CTX *tlscreatectx(uint8_t type, struct tls *conf) {
     SSL_CTX *ctx = NULL;
     unsigned long error;
@@ -392,6 +422,10 @@ static SSL_CTX *tlscreatectx(uint8_t type, struct tls *conf) {
     }
     }
 #endif
+
+    if (conf->snicallback) {
+	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_servername_cb);
+    }
 
     if (conf->certkeypwd) {
 	SSL_CTX_set_default_passwd_cb_userdata(ctx, conf->certkeypwd);
@@ -753,6 +787,25 @@ int verifyconfcert(X509 *cert, struct clsrvconf *conf) {
     return ok;
 }
 
+int tlssn_in_conf(char *tlssn, struct clsrvconf *conf) {
+    char *sn = NULL;
+    int ret = 0;
+    int i;
+
+    if ((!tlssn) || (!conf) || (!conf->tlssn)) {
+	return 0;
+    }
+
+    for (i=0, sn=conf->tlssn[i]; sn; sn=conf->tlssn[++i]) {
+	if (!strcasecmp(tlssn, sn)) {
+	    ret = 1;
+	    break;
+	}
+    }
+
+    return ret;
+}
+
 int conftls_cb(struct gconffile **cf, void *arg, char *block, char *opt, char *val) {
     struct tls *conf;
     long int expiry = LONG_MIN;
@@ -775,6 +828,7 @@ int conftls_cb(struct gconffile **cf, void *arg, char *block, char *opt, char *v
 			  "CacheExpiry", CONF_LINT, &expiry,
 			  "CRLCheck", CONF_BLN, &conf->crlcheck,
 			  "PolicyOID", CONF_MSTR, &conf->policyoids,
+			  "SNICallback", CONF_BLN, &conf->snicallback,
 			  NULL
 	    )) {
 	debug(DBG_ERR, "conftls_cb: configuration error in block %s", val);

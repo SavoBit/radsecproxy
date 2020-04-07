@@ -2170,6 +2170,8 @@ void freeclsrvconf(struct clsrvconf *conf) {
     free(conf->confsecret);
     free(conf->secret);
     free(conf->tls);
+    if (conf->tlssn)
+	freegconfmstr(conf->tlssn);
     free(conf->matchcertattr);
     if (conf->certcnregex)
 	regfree(conf->certcnregex);
@@ -2264,6 +2266,7 @@ int mergesrvconf(struct clsrvconf *dst, struct clsrvconf *src) {
     !mergeconfmstring(&dst->source, &src->source) ||
 	!mergeconfstring(&dst->confsecret, &src->confsecret) ||
 	!mergeconfstring(&dst->tls, &src->tls) ||
+	!mergeconfmstring(&dst->tlssn, &src->tlssn) ||
 	!mergeconfstring(&dst->matchcertattr, &src->matchcertattr) ||
 	!mergeconfstring(&dst->confrewritein, &src->confrewritein) ||
 	!mergeconfstring(&dst->confrewriteout, &src->confrewriteout) ||
@@ -2326,7 +2329,9 @@ int confclient_cb(struct gconffile **cf, void *arg, char *block, char *opt, char
             "IPv6Only", CONF_BLN, &ipv6only,
 	    "secret", CONF_STR_NOESC, &conf->confsecret,
 #if defined(RADPROT_TLS) || defined(RADPROT_DTLS)
+	    /* FIXME tls/tlssn validation */
 	    "tls", CONF_STR, &conf->tls,
+	    "tlssn", CONF_MSTR, &conf->tlssn,
 	    "matchcertificateattribute", CONF_STR, &conf->matchcertattr,
 	    "CertificateNameCheck", CONF_BLN, &conf->certnamecheck,
 #endif
@@ -2371,6 +2376,13 @@ int confclient_cb(struct gconffile **cf, void *arg, char *block, char *opt, char
 	    debugx(1, DBG_ERR, "error in block %s, no tls context defined", block);
 	if (conf->matchcertattr && !addmatchcertattr(conf))
 	    debugx(1, DBG_ERR, "error in block %s, invalid MatchCertificateAttributeValue", block);
+	if (!conf->tlssn) {
+	    conf->tlssn = malloc(2 * sizeof(char *));
+	    if (conf->tlssn) {
+		conf->tlssn[0] = conf->tls ? stringcopy(conf->tls, 0) : stringcopy(conf->tlsconf->name, 0);
+		conf->tlssn[1] = NULL;
+	    }
+	}
     }
 #endif
 
@@ -2460,6 +2472,10 @@ int compileserverconfig(struct clsrvconf *conf, const char *block) {
 	    debug(DBG_ERR, "error in block %s, invalid MatchCertificateAttributeValue", block);
 	    return 0;
 	}
+	if (conf->tlsconf->snicallback) {
+	    debug(DBG_ERR, "error in block %s , tls %s has SNICallback, invalid in server conf", block, conf->tlsconf->name);
+	    return 0;
+	}
     }
 #endif
 
@@ -2528,6 +2544,7 @@ int confserver_cb(struct gconffile **cf, void *arg, char *block, char *opt, char
             "source", CONF_MSTR, &conf->source,
             "secret", CONF_STR_NOESC, &conf->confsecret,
 #if defined(RADPROT_TLS) || defined(RADPROT_DTLS)
+	    /* FIXME tls/tlssn validation */
             "tls", CONF_STR, &conf->tls,
             "MatchCertificateAttribute", CONF_STR, &conf->matchcertattr,
             "CertificateNameCheck", CONF_BLN, &conf->certnamecheck,
